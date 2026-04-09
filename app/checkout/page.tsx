@@ -1,185 +1,167 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState } from "react";
 
-type CheckoutItem = {
-  programmeTitle?: string;
-  slug?: string;
-  attendeeCount?: number;
-  quantity?: number;
-  currency?: string;
-  pricing?: {
-    total?: number;
-    currency?: string;
-  };
+type CheckoutCartItem = {
+  programmeId: string;
+  programmeTitle: string;
+  quantity: number;
+  attendeeCount: number;
+  deliveryMode: "virtual" | "onsite" | "hybrid";
+  hubType: "standard" | "executive" | "custom";
+  durationDays: number;
+  selectedAddons: string[];
+  promoCode?: string;
 };
 
-function formatMoney(amount: number, currency = "ZAR") {
-  try {
-    return new Intl.NumberFormat("en-ZA", {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 2,
-    }).format(amount);
-  } catch {
-    return `${currency} ${amount.toFixed(2)}`;
-  }
-}
+type CheckoutCustomer = {
+  email: string;
+  firstName: string;
+  lastName: string;
+  companyName: string;
+  phone?: string;
+};
+
+type CreateSessionResponse = {
+  ok: boolean;
+  url?: string | null;
+  error?: string;
+};
+
+const demoCart: CheckoutCartItem[] = [
+  {
+    programmeId: "leadership-management-development",
+    programmeTitle: "Leadership Management Development",
+    quantity: 1,
+    attendeeCount: 12,
+    deliveryMode: "onsite",
+    hubType: "executive",
+    durationDays: 2,
+    selectedAddons: ["certification", "catering"],
+    promoCode: "SPRINGBOK10",
+  },
+];
 
 export default function CheckoutPage() {
-  const searchParams = useSearchParams();
-  const [items, setItems] = useState<CheckoutItem[]>([]);
+  const [customer, setCustomer] = useState<CheckoutCustomer>({
+    email: "",
+    firstName: "",
+    lastName: "",
+    companyName: "",
+    phone: "",
+  });
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  useEffect(() => {
-    const status = searchParams.get("status");
-
-    if (status === "success") {
-      setMessage("Payment completed successfully.");
-    } else if (status === "cancelled") {
-      setMessage("Payment was cancelled.");
-    }
-
-    const raw = localStorage.getItem("kcg-cart");
-    if (!raw) return;
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setItems(parsed);
-      }
-    } catch {
-      setItems([]);
-    }
-  }, [searchParams]);
-
-  const total = useMemo(() => {
-    return items.reduce((sum, item) => sum + Number(item.pricing?.total ?? 0), 0);
-  }, [items]);
-
-  const currency = items[0]?.currency || items[0]?.pricing?.currency || "ZAR";
-
-  async function handlePayment() {
+  async function handleCheckout(): Promise<void> {
+    setLoading(true);
     setMessage("");
 
-    if (!items.length) {
-      setMessage("No cart item found.");
-      return;
-    }
-
     try {
-      setLoading(true);
+      const successUrl = `${window.location.origin}/checkout/success`;
+      const cancelUrl = `${window.location.origin}/checkout`;
 
-      const response = await fetch("/api/payments/create-session", {
+      const response = await fetch("/api/checkout/create-session", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-idempotency-key": crypto.randomUUID(),
         },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({
+          cart: demoCart,
+          customer,
+          currency: "zar",
+          successUrl,
+          cancelUrl,
+          orderReference: `SBK-${Date.now()}`,
+        }),
       });
 
-      const data = await response.json().catch(() => ({}));
+      const data = (await response.json()) as CreateSessionResponse;
 
-      if (!response.ok) {
+      if (!response.ok || !data.ok) {
+        setMessage(data.error ?? "Unable to create checkout session.");
         setLoading(false);
-        setMessage(data.error || "Payment session creation failed.");
         return;
       }
 
-      if (data?.url) {
-        window.location.href = data.url;
+      if (!data.url) {
+        setMessage("Checkout session created, but no redirect URL was returned.");
+        setLoading(false);
         return;
       }
 
+      window.location.href = data.url;
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unexpected checkout error.";
+      setMessage(errorMessage);
       setLoading(false);
-      setMessage("Payment session created, but no redirect URL was returned.");
-    } catch (error) {
-      console.error(error);
-      setLoading(false);
-      setMessage("Unable to start payment right now.");
     }
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-12">
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-semibold">Checkout</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Review your order and continue to payment.
-          </p>
-        </div>
+    <main className="mx-auto max-w-3xl p-6">
+      <h1 className="text-3xl font-semibold">Checkout</h1>
+      <p className="mt-2 text-sm text-gray-600">
+        Review your details and continue to secure payment.
+      </p>
 
-        <Link href="/" className="rounded-xl border px-4 py-2 text-sm font-medium">
-          Return home
-        </Link>
+      <div className="mt-8 grid gap-4">
+        <input
+          className="rounded border p-3"
+          placeholder="First name"
+          value={customer.firstName}
+          onChange={(e) =>
+            setCustomer((prev) => ({ ...prev, firstName: e.target.value }))
+          }
+        />
+        <input
+          className="rounded border p-3"
+          placeholder="Last name"
+          value={customer.lastName}
+          onChange={(e) =>
+            setCustomer((prev) => ({ ...prev, lastName: e.target.value }))
+          }
+        />
+        <input
+          className="rounded border p-3"
+          placeholder="Company name"
+          value={customer.companyName}
+          onChange={(e) =>
+            setCustomer((prev) => ({ ...prev, companyName: e.target.value }))
+          }
+        />
+        <input
+          className="rounded border p-3"
+          placeholder="Email"
+          type="email"
+          value={customer.email}
+          onChange={(e) =>
+            setCustomer((prev) => ({ ...prev, email: e.target.value }))
+          }
+        />
+        <input
+          className="rounded border p-3"
+          placeholder="Phone"
+          value={customer.phone ?? ""}
+          onChange={(e) =>
+            setCustomer((prev) => ({ ...prev, phone: e.target.value }))
+          }
+        />
+
+        <button
+          type="button"
+          onClick={handleCheckout}
+          disabled={loading}
+          className="rounded bg-black px-4 py-3 text-white disabled:opacity-50"
+        >
+          {loading ? "Creating secure checkout..." : "Proceed to payment"}
+        </button>
+
+        {message ? <p className="text-sm text-red-600">{message}</p> : null}
       </div>
-
-      {message ? (
-        <div className="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {message}
-        </div>
-      ) : null}
-
-      {items.length === 0 ? (
-        <div className="rounded-2xl border p-6">
-          <p className="font-medium">No cart item found.</p>
-          <div className="mt-4">
-            <Link
-              href="/programmes"
-              className="inline-flex rounded-xl bg-black px-4 py-2 text-sm font-medium text-white"
-            >
-              Browse programmes
-            </Link>
-          </div>
-        </div>
-      ) : (
-        <div className="grid gap-8 md:grid-cols-[1.3fr_0.7fr]">
-          <section className="rounded-2xl border p-6">
-            <h2 className="text-xl font-semibold">Order Summary</h2>
-
-            <div className="mt-6 space-y-4">
-              {items.map((item, index) => (
-                <div key={`${item.slug || "item"}-${index}`} className="rounded-xl border p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="font-medium">{item.programmeTitle || "Programme"}</p>
-                      <p className="mt-1 text-sm text-gray-600">
-                        Attendees: {item.attendeeCount || 1}
-                      </p>
-                    </div>
-
-                    <div className="font-semibold">
-                      {formatMoney(Number(item.pricing?.total ?? 0), currency)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <aside className="rounded-2xl border p-6">
-            <h2 className="text-xl font-semibold">Payment</h2>
-
-            <div className="mt-6 flex items-center justify-between text-base font-semibold">
-              <span>Total</span>
-              <span>{formatMoney(total, currency)}</span>
-            </div>
-
-            <button
-              type="button"
-              onClick={handlePayment}
-              disabled={loading}
-              className="mt-6 inline-flex w-full items-center justify-center rounded-xl bg-black px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
-            >
-              {loading ? "Redirecting..." : "Proceed to payment"}
-            </button>
-          </aside>
-        </div>
-      )}
     </main>
   );
 }
