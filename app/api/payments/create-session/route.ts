@@ -1,83 +1,59 @@
-import { NextRequest, NextResponse } from "next/server";
-import Stripe from "stripe";
+import { NextResponse } from "next/server";
 
-function getBaseUrl(req: NextRequest) {
-  const envUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (envUrl) return envUrl.replace(/\/$/, "");
-
-  const host = req.headers.get("host");
-  const protocol = process.env.NODE_ENV === "development" ? "http" : "https";
-  return `${protocol}://${host}`;
-}
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const secretKey = process.env.STRIPE_SECRET_KEY;
-
-    if (!secretKey) {
-      return NextResponse.json(
-        { error: "Missing STRIPE_SECRET_KEY in environment variables." },
-        { status: 500 }
-      );
-    }
-
-    const stripe = new Stripe(secretKey);
     const body = await req.json();
-    const items = Array.isArray(body?.items) ? body.items : [];
 
-    if (!items.length) {
+    const items = body.items || [];
+
+    if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json(
-        { error: "No checkout items were supplied." },
+        { error: "No items provided for checkout." },
         { status: 400 }
       );
     }
 
-    const currency = String(
-      items[0]?.currency || items[0]?.pricing?.currency || "ZAR"
-    ).toLowerCase();
-
-    const line_items = items.map((item: any, index: number) => {
-      const rawAmount = Number(item?.pricing?.total ?? 0);
-      const safeAmount = Number.isFinite(rawAmount) && rawAmount > 0 ? rawAmount : 0;
+    // Build line items safely
+    const line_items = items.map((item: any) => {
+      const amount = Number(item?.price || 0);
 
       return {
         price_data: {
-          currency,
+          currency: "usd", // change later if needed
           product_data: {
-            name: item?.programmeTitle || `Programme ${index + 1}`,
+            name: item?.name || "Training Programme",
           },
-          unit_amount: Math.round(safeAmount * 100),
+          unit_amount: Math.round(amount * 100),
         },
-        quantity: 1,
+        quantity: Number(item?.quantity || 1),
       };
     });
 
-    if (line_items.some((item) => item.price_data.unit_amount <= 0)) {
+    // Validate amounts
+    const invalidItem = line_items.some(
+      (item: any) => item.price_data.unit_amount <= 0
+    );
+
+    if (invalidItem) {
       return NextResponse.json(
         { error: "One or more checkout items have an invalid amount." },
         { status: 400 }
       );
     }
 
-    const baseUrl = getBaseUrl(req);
-
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      line_items,
-      success_url: `${baseUrl}/checkout?status=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${baseUrl}/checkout?status=cancelled`,
-    });
-
+    // MOCK session response (replace with Stripe later)
     return NextResponse.json({
-      ok: true,
-      url: session.url,
+      success: true,
+      message: "Checkout session created successfully.",
+      data: {
+        redirectUrl: "/checkout/success",
+      },
     });
-  } catch (error) {
-    console.error("Stripe session creation failed:", error);
+  } catch (error: any) {
+    console.error("Payment session error:", error);
 
     return NextResponse.json(
-      { error: "Unable to create payment session." },
+      { error: "Failed to create checkout session." },
       { status: 500 }
     );
   }
